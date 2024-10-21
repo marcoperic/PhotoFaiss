@@ -12,7 +12,7 @@ import TFHandler from './utils/TFHandler';
 const { width } = Dimensions.get('window');
 const imageSize = width * 0.8;
 
-export default function HomeScreen() {
+const App = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [photoLoader, setPhotoLoader] = useState<PhotoLoader | null>(null);
   const [tfHandler, setTfHandler] = useState<TFHandler | null>(null);
@@ -22,6 +22,10 @@ export default function HomeScreen() {
   const [isWeb, setIsWeb] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [features, setFeatures] = useState<number[][]>([]);
+  
+  // New state variables for debugging
+  const [currentProcessingUri, setCurrentProcessingUri] = useState<string | null>(null);
+  const [currentFeatures, setCurrentFeatures] = useState<number[] | null>(null);
 
   useEffect(() => {
     const initializeHandlers = async () => {
@@ -71,8 +75,10 @@ export default function HomeScreen() {
 
     for (const uri of uriList) {
       try {
+        setCurrentProcessingUri(uri); // Set current processing URI
         const feature = await tfHandler.extract_features(uri);
         extractedFeatures.push(feature);
+        setCurrentFeatures(feature); // Set current features
         console.info(`Extracted features for image: ${uri}`);
       } catch (error) {
         console.error(`Error extracting features from ${uri}:`, error);
@@ -83,11 +89,33 @@ export default function HomeScreen() {
 
     setFeatures(extractedFeatures);
     console.log('Feature extraction completed.');
+    setCurrentProcessingUri(null);
+    setCurrentFeatures(null);
   }, [photoLoader, tfHandler, modelLoaded]);
+
+  const renderDebugView = () => {
+    if (!currentProcessingUri) return null;
+
+    return (
+      <View style={styles.debugContainer}>
+        <ThemedText style={styles.debugTitle}>Processing Image:</ThemedText>
+        <Image source={{ uri: currentProcessingUri }} style={styles.debugImage} />
+        {currentFeatures && (
+          <ScrollView style={styles.featuresScroll}>
+            <ThemedText style={styles.debugFeaturesTitle}>Extracted Features:</ThemedText>
+            <ThemedText style={styles.debugFeaturesText}>
+              {currentFeatures.slice(0, 100).join(', ')}...
+            </ThemedText>
+          </ScrollView>
+        )}
+      </View>
+    );
+  };
 
   const renderContent = () => (
     <>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
+        {/* Existing Progress Views */}
         <View style={styles.progressContainer}>
           <ThemedText style={styles.sectionTitle}>Photo Loading Progress</ThemedText>
           <View style={styles.progressBarContainer}>
@@ -112,7 +140,7 @@ export default function HomeScreen() {
         </View>
         <View style={styles.modelIndicator}>
           <Ionicons 
-            name={modelLoaded ? "checkmark-circle" : "ellipsis-horizontal-circle"} 
+            name="checkmark-circle" 
             size={24} 
             color={modelLoaded ? "#4caf50" : "#ffa000"} 
           />
@@ -124,6 +152,9 @@ export default function HomeScreen() {
             Extracted features for {features.length} images.
           </ThemedText>
         )}
+
+        {/* Render Debug View */}
+        {renderDebugView()}
       </ScrollView>
     </>
   );
@@ -138,7 +169,7 @@ export default function HomeScreen() {
       )}
     </ThemedView>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -192,4 +223,40 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontStyle: 'italic',
   },
+
+  // Styles for Debug View
+  debugContainer: {
+    marginTop: 20,
+    width: '100%',
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 8,
+  },
+  debugTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  debugImage: {
+    width: imageSize,
+    height: imageSize,
+    resizeMode: 'cover',
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  featuresScroll: {
+    maxHeight: 150,
+  },
+  debugFeaturesTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  debugFeaturesText: {
+    fontSize: 14,
+    color: '#555',
+  },
 });
+
+export default App;
