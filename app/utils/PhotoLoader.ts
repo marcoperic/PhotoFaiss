@@ -35,7 +35,7 @@ class PhotoLoader {
       const { assets, endCursor: newEndCursor, hasNextPage, totalCount } = await MediaLibrary.getAssetsAsync({
         mediaType: 'photo',
         after: endCursor,
-        first: 1000, // Fetch in batches of 1000
+        first: 250, // Fetch in batches of 1000
       });
       this.photoURIs = [...this.photoURIs, ...assets.map(asset => asset.uri)];
       this.loadedPhotos += assets.length;

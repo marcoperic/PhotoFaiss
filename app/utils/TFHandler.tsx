@@ -40,29 +40,44 @@ class TFHandler {
    * @returns A tensor suitable for MobileNet input.
    */
   private async preprocessImage(uri: string): Promise<tf.Tensor> {
-    // Resize the image to 224x224 pixels
-    const { uri: resizedUri } = await ImageManipulator.manipulateAsync(
-      uri,
-      [{ resize: { width: 224, height: 224 } }]
-    );
+    let normalized: tf.Tensor | null = null;
+    let imageTensor: tf.Tensor | null = null;
+    try {
+      // Resize the image to 224x224 pixels
+      const { uri: resizedUri } = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width: 224, height: 224 } }]
+      );
 
-    // Read the resized image as a base64 string
-    const imgB64 = await FileSystem.readAsStringAsync(resizedUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+      // Read the resized image as a base64 string
+      const imgB64 = await FileSystem.readAsStringAsync(resizedUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
 
-    // Convert base64 string to a Uint8Array
-    const imgBuffer = tf.util.encodeString(imgB64, 'base64').buffer;
-    const raw = new Uint8Array(imgBuffer);
+      // Convert base64 string to a Uint8Array
+      const imgBuffer = tf.util.encodeString(imgB64, 'base64').buffer;
+      const raw = new Uint8Array(imgBuffer);
 
-    // Decode the JPEG image to a tensor
-    const imageTensor = decodeJpeg(raw);
+      // Decode the JPEG image to a tensor
+      imageTensor = decodeJpeg(raw);
 
-    // Normalize the image tensor
-    const normalized = tf.div(tf.sub(imageTensor, 127.5), 127.5);
+      // Normalize the image tensor
+      normalized = tf.div(tf.sub(imageTensor, 127.5), 127.5);
 
-    // Expand dimensions to match MobileNet's expected input shape
-    return normalized.expandDims(0);
+      // Expand dimensions to match MobileNet's expected input shape
+      return normalized.expandDims(0);
+    } catch (error) {
+      console.error('Error in preprocessImage:', error);
+      throw error;
+    } finally {
+      // Dispose intermediate tensors
+      if (imageTensor) {
+        imageTensor.dispose();
+      }
+      if (normalized) {
+        normalized.dispose();
+      }
+    }
   }
 
   /**
@@ -75,20 +90,32 @@ class TFHandler {
       throw new Error('Model not initialized. Call init() first.');
     }
 
-    // Preprocess the image
-    const preprocessedImage = await this.preprocessImage(uri);
+    let preprocessedImage: tf.Tensor | null = null;
+    let activation: tf.Tensor | null = null;
+    try {
+      // Preprocess the image
+      preprocessedImage = await this.preprocessImage(uri);
 
-    // Extract features using MobileNet's default embedding
-    const activation = this.model.infer(preprocessedImage, false) as tf.Tensor;
+      // Extract features using MobileNet's default embedding
+      activation = this.model.infer(preprocessedImage, false) as tf.Tensor;
 
-    // Convert tensor to array
-    const features = Array.from(activation.dataSync());
+      // Convert tensor to array
+      const features = Array.from(activation.dataSync());
 
-    // Dispose tensors to free memory
-    preprocessedImage.dispose();
-    activation.dispose();
-
-    return features;
+      console.info(`Extracted features for image: ${uri}`);
+      return features;
+    } catch (error) {
+      console.error(`Error extracting features from ${uri}:`, error);
+      throw error;
+    } finally {
+      // Dispose tensors to free memory
+      if (preprocessedImage) {
+        preprocessedImage.dispose();
+      }
+      if (activation) {
+        activation.dispose();
+      }
+    }
   }
 }
 
