@@ -16,7 +16,8 @@ export default function HomeScreen() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [photoLoader, setPhotoLoader] = useState<PhotoLoader | null>(null);
   const [tfHandler, setTfHandler] = useState<TFHandler | null>(null);
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [photoLoadingProgress, setPhotoLoadingProgress] = useState(0);
+  const [modelLoadingProgress, setModelLoadingProgress] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isWeb, setIsWeb] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
@@ -39,11 +40,14 @@ export default function HomeScreen() {
       setTfHandler(tf);
 
       try {
-        await loader.initialize();
-        setLoadingProgress(0.5);
-        await tf.init();
-        setModelLoaded(true);
-        setLoadingProgress(1);
+        // Initialize PhotoLoader and TFHandler concurrently
+        await Promise.all([
+          loader.initialize((progress: number) => setPhotoLoadingProgress(progress)),
+          tf.init().then(() => {
+            setModelLoaded(true);
+            setModelLoadingProgress(1);
+          })
+        ]);
       } catch (error) {
         console.error('Error initializing:', error);
         if (Platform.OS !== 'web') {
@@ -71,10 +75,10 @@ export default function HomeScreen() {
   const renderContent = () => (
     <>
       <View style={styles.progressBarContainer}>
-        <View style={[styles.progressBar, { width: `${loadingProgress * 100}%` }]} />
+        <View style={[styles.progressBar, { width: `${photoLoadingProgress * 100}%` }]} />
       </View>
       <ThemedText>
-        {loadingProgress < 1 ? 'Loading...' : 'Ready!'}
+        {photoLoadingProgress < 1 ? `Loading Photos: ${(photoLoadingProgress * 100).toFixed(0)}%` : 'Photos Loaded'}
       </ThemedText>
       <View style={styles.modelIndicator}>
         <Ionicons 
@@ -84,7 +88,7 @@ export default function HomeScreen() {
         />
         <ThemedText>{modelLoaded ? "Model Loaded" : "Loading Model"}</ThemedText>
       </View>
-      <Button title="Select Photo" onPress={pickImage} disabled={loadingProgress < 1} />
+      <Button title="Select Photo" onPress={pickImage} disabled={!modelLoaded} />
       {selectedImage && (
         <Image source={{ uri: selectedImage }} style={styles.image} />
       )}

@@ -11,11 +11,19 @@ class PhotoLoader {
     this.loadedPhotos = 0;
   }
 
-  async initialize() {
-    await this.loadAllPhotos();
+  /**
+   * Initializes and loads all photos.
+   * @param onProgress - Callback to update loading progress.
+   */
+  async initialize(onProgress?: (progress: number) => void) {
+    await this.loadAllPhotos(onProgress);
   }
 
-  async loadAllPhotos() {
+  /**
+   * Loads all photos with optional progress updates.
+   * @param onProgress - Callback to update loading progress.
+   */
+  async loadAllPhotos(onProgress?: (progress: number) => void) {
     const { status } = await MediaLibrary.requestPermissionsAsync();
     if (status !== 'granted') {
       throw new Error('Permission to access media library was denied');
@@ -33,6 +41,11 @@ class PhotoLoader {
       this.loadedPhotos += assets.length;
       this.totalPhotos = totalCount;
       console.log(`Loaded ${this.loadedPhotos} photos out of ${this.totalPhotos}`);
+
+      if (onProgress) {
+        onProgress(this.getProgress());
+      }
+
       endCursor = newEndCursor;
       hasMorePhotos = hasNextPage;
     }

@@ -20,12 +20,12 @@ class TFHandler {
    * Initializes TensorFlow.js and loads the MobileNet model.
    */
   async init() {
-    // Wait for TensorFlow.js to be ready
-    await tf.ready();
-    console.log('TensorFlow.js is ready.');
-
-    // Load the MobileNet model
     try {
+      // Wait for TensorFlow.js to be ready
+      await tf.ready();
+      console.log('TensorFlow.js is ready.');
+
+      // Load the MobileNet model
       this.model = await mobilenet.load();
       console.log('MobileNet model loaded successfully.');
     } catch (error) {
