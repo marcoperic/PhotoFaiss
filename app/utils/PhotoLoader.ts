@@ -32,6 +32,7 @@ class PhotoLoader {
       this.photoURIs = [...this.photoURIs, ...assets.map(asset => asset.uri)];
       this.loadedPhotos += assets.length;
       this.totalPhotos = totalCount;
+      console.log(`Loaded ${this.loadedPhotos} photos out of ${this.totalPhotos}`);
       endCursor = newEndCursor;
       hasMorePhotos = hasNextPage;
     }

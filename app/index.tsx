@@ -2,23 +2,27 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Button, StyleSheet, Image, Dimensions, View, Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
+import { Ionicons } from '@expo/vector-icons';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import PhotoLoader from './utils/PhotoLoader';
+import TFHandler from './utils/TFHandler';
 
 const { width } = Dimensions.get('window');
-const imageSize = width * 0.8; // 80% of screen width
+const imageSize = width * 0.8;
 
 export default function HomeScreen() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [photoLoader, setPhotoLoader] = useState<PhotoLoader | null>(null);
+  const [tfHandler, setTfHandler] = useState<TFHandler | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isWeb, setIsWeb] = useState(false);
+  const [modelLoaded, setModelLoaded] = useState(false);
 
   useEffect(() => {
-    const initializePhotoLoader = async () => {
+    const initializeHandlers = async () => {
       setIsWeb(Platform.OS === 'web');
       
       if (Platform.OS !== 'web') {
@@ -31,18 +35,24 @@ export default function HomeScreen() {
 
       const loader = new PhotoLoader();
       setPhotoLoader(loader);
+      const tf = new TFHandler();
+      setTfHandler(tf);
+
       try {
         await loader.initialize();
+        setLoadingProgress(0.5);
+        await tf.init();
+        setModelLoaded(true);
         setLoadingProgress(1);
       } catch (error) {
-        console.error('Error initializing PhotoLoader:', error);
+        console.error('Error initializing:', error);
         if (Platform.OS !== 'web') {
           setPermissionDenied(true);
         }
       }
     };
 
-    initializePhotoLoader();
+    initializeHandlers();
   }, []);
 
   const pickImage = useCallback(async () => {
@@ -64,8 +74,16 @@ export default function HomeScreen() {
         <View style={[styles.progressBar, { width: `${loadingProgress * 100}%` }]} />
       </View>
       <ThemedText>
-        {loadingProgress < 1 ? 'Loading photos...' : 'Photos loaded!'}
+        {loadingProgress < 1 ? 'Loading...' : 'Ready!'}
       </ThemedText>
+      <View style={styles.modelIndicator}>
+        <Ionicons 
+          name={modelLoaded ? "checkmark-circle" : "ellipsis-horizontal-circle"} 
+          size={24} 
+          color={modelLoaded ? "#4caf50" : "#ffa000"} 
+        />
+        <ThemedText>{modelLoaded ? "Model Loaded" : "Loading Model"}</ThemedText>
+      </View>
       <Button title="Select Photo" onPress={pickImage} disabled={loadingProgress < 1} />
       {selectedImage && (
         <Image source={{ uri: selectedImage }} style={styles.image} />
@@ -114,5 +132,10 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#4caf50',
     borderRadius: 5,
+  },
+  modelIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
   },
 });
