@@ -1,95 +1,136 @@
 import * as tf from '@tensorflow/tfjs';
 import '@tensorflow/tfjs-react-native';
-import { decodeJpeg } from '@tensorflow/tfjs-react-native';
-import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
 import * as mobilenet from '@tensorflow-models/mobilenet';
+import { bundleResourceIO } from '@tensorflow/tfjs-react-native';
+import * as FileSystem from 'expo-file-system';
+import * as jpeg from 'jpeg-js';
+import * as ImageManipulator from 'expo-image-manipulator';
 
-/**
- * TFHandler is responsible for initializing TensorFlow.js,
- * loading the MobileNet model, and extracting features from images.
- */
-class TFHandler {
-  private model: mobilenet.MobileNet | null;
+export class TFHandler {
+  private model: mobilenet.MobileNet | null = null;
+  private isModelReady: boolean = false;
 
   constructor() {
-    this.model = null;
+    this.init();
   }
 
   /**
-   * Initializes TensorFlow.js and loads the MobileNet model.
+   * Initialize TensorFlow.js and load the MobileNet model.
    */
-  async init() {
-    try {
-      // Wait for TensorFlow.js to be ready
-      await tf.ready();
-      console.log('TensorFlow.js is ready.');
+  public async init() {
+    await tf.ready();
+    console.log('TensorFlow.js is ready.');
 
-      // Load the MobileNet model
-      this.model = await mobilenet.load();
-      console.log('MobileNet model loaded successfully.');
+    // Load the MobileNet model from the mobilenet package
+    this.model = await mobilenet.load({
+      version: 2,
+      alpha: 1.0, // You can choose version and alpha based on your requirements
+    });
+
+    this.isModelReady = true;
+    console.log('MobileNet model loaded.');
+  }
+
+  /**
+   * Preprocess a single image.
+   * @param imageUri URI of the image to preprocess.
+   * @returns Tensor3D of the preprocessed image.
+   */
+  private async preprocessImage(imageUri: string): Promise<tf.Tensor3D> {
+    try {
+      // First manipulate the image to ensure it's in a readable format
+      const manipulatedImage = await ImageManipulator.manipulateAsync(
+        imageUri,
+        [{ resize: { width: 224, height: 224 } }],
+        { format: ImageManipulator.SaveFormat.JPEG }
+      );
+
+      const imgB64 = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const imgBuffer = tf.util.encodeString(imgB64, 'base64').buffer;
+      const raw = new Uint8Array(imgBuffer);
+      const { width, height, data } = jpeg.decode(raw, { useTArray: true });
+
+      let imgTensor = tf.tensor3d(data, [height, width, 4]);
+      imgTensor = imgTensor.slice([0, 0, 0], [-1, -1, 3]);
+      imgTensor = tf.image.resizeBilinear(imgTensor, [224, 224]);
+      imgTensor = imgTensor.toFloat().div(tf.scalar(127)).sub(tf.scalar(1));
+
+      return imgTensor;
     } catch (error) {
-      console.error('Error loading MobileNet model:', error);
+      console.error('Error preprocessing image:', error);
       throw error;
     }
   }
 
   /**
-   * Preprocesses the image by resizing and normalizing.
-   * @param uri - The URI of the image to preprocess.
-   * @returns A tensor suitable for MobileNet input.
+   * Extract features from a single image.
+   * @param imageUri URI of the image.
+   * @returns Tensor of extracted features.
    */
-  private async preprocessImage(uri: string): Promise<tf.Tensor> {
-    // Resize the image to 224x224 pixels
-    const { uri: resizedUri } = await ImageManipulator.manipulateAsync(
-      uri,
-      [{ resize: { width: 224, height: 224 } }]
-    );
+  public async extractFeatures(imageUri: string): Promise<tf.Tensor | null> {
+    if (!this.isModelReady || !this.model) {
+      console.warn('Model is not ready yet.');
+      return null;
+    }
 
-    // Read the resized image as a base64 string
-    const imgB64 = await FileSystem.readAsStringAsync(resizedUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-
-    // Convert base64 string to a Uint8Array
-    const imgBuffer = tf.util.encodeString(imgB64, 'base64').buffer;
-    const raw = new Uint8Array(imgBuffer);
-
-    // Decode the JPEG image to a tensor
-    const imageTensor = decodeJpeg(raw);
-
-    // Normalize the image tensor
-    const normalized = tf.div(tf.sub(imageTensor, 127.5), 127.5);
-
-    // Expand dimensions to match MobileNet's expected input shape
-    return normalized.expandDims(0);
+    try {
+      const preprocessedImage = await this.preprocessImage(imageUri);
+      const features = this.model.infer(preprocessedImage, true) as tf.Tensor;
+      preprocessedImage.dispose(); // Dispose the tensor to free memory
+      return features.flatten(); // Ensure we return a flattened tensor
+    } catch (error) {
+      console.error('Error extracting features:', error);
+      return null;
+    }
   }
 
   /**
-   * Extracts features from an image using the MobileNet model.
-   * @param uri - The URI of the image.
-   * @returns A promise that resolves to an array of feature numbers.
+   * Extract features from multiple images in batches.
+   * @param imageUris Array of image URIs.
+   * @param batchSize Number of images to process per batch.
+   * @returns Array of feature tensors.
    */
-  async extract_features(uri: string): Promise<number[]> {
-    if (!this.model) {
-      throw new Error('Model not initialized. Call init() first.');
+  public async extractFeaturesBatch(
+    imageUris: string[],
+    batchSize: number = 2
+  ): Promise<tf.Tensor[]> {
+    if (!this.isModelReady || !this.model) {
+      console.warn('Model is not ready yet.');
+      return [];
     }
 
-    // Preprocess the image
-    const preprocessedImage = await this.preprocessImage(uri);
+    const features: tf.Tensor[] = [];
+    const totalImages = imageUris.length;
 
-    // Extract features using MobileNet's default embedding
-    const activation = this.model.infer(preprocessedImage, false) as tf.Tensor;
+    for (let i = 0; i < totalImages; i += batchSize) {
+      const batchUris = imageUris.slice(i, i + batchSize);
+      console.log(`Processing batch ${i / batchSize + 1} (${batchUris.length} images)`);
 
-    // Convert tensor to array
-    const features = Array.from(activation.dataSync());
+      const preprocessedImagesPromises = batchUris.map((uri) => this.preprocessImage(uri));
+      const preprocessedImages = await Promise.all(preprocessedImagesPromises);
+      const batchedImages = tf.stack(preprocessedImages);
 
-    // Dispose tensors to free memory
-    preprocessedImage.dispose();
-    activation.dispose();
+      const batchFeatures = this.model.infer(batchedImages, true) as tf.Tensor;
+      features.push(batchFeatures);
+
+      // Dispose tensors to free memory
+      batchedImages.dispose();
+      preprocessedImages.forEach((tensor) => tensor.dispose());
+    }
 
     return features;
   }
-}
 
-export default TFHandler;
+  /**
+   * Dispose the model and tensors to free up memory.
+   */
+  public dispose() {
+    if (this.model) {
+      this.model = null;
+    }
+    tf.disposeVariables();
+    console.log('Disposed TensorFlow model and variables.');
+  }
+}

@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import PhotoLoader from './utils/PhotoLoader';
-import TFHandler from './utils/TFHandler';
+import { TFHandler } from './utils/TFHandler';
 
 const { width } = Dimensions.get('window');
 const imageSize = width * 0.8;
@@ -41,7 +41,7 @@ export default function HomeScreen() {
       setTfHandler(tf);
 
       try {
-        // Initialize PhotoLoader and TFHandler concurrently
+        // Initialize PhotoLoader and wait for TFHandler to load the model
         await Promise.all([
           loader.initialize((progress: number) => setPhotoLoadingProgress(progress)),
           tf.init().then(() => {
@@ -57,6 +57,11 @@ export default function HomeScreen() {
     };
 
     initializeHandlers();
+
+    // Cleanup on unmount
+    return () => {
+      tfHandler?.dispose();
+    };
   }, []);
 
   const extractFeatures = useCallback(async () => {
@@ -71,9 +76,13 @@ export default function HomeScreen() {
 
     for (const uri of uriList) {
       try {
-        const feature = await tfHandler.extract_features(uri);
-        extractedFeatures.push(feature);
-        console.info(`Extracted features for image: ${uri}`);
+        const featureTensor = await tfHandler.extractFeatures(uri);
+        if (featureTensor) {
+          const featureArray = Array.from(await featureTensor.dataSync());
+          extractedFeatures.push(featureArray);
+          featureTensor.dispose(); // Dispose tensor after extraction
+          console.info(`Extracted features for image: ${uri}`);
+        }
       } catch (error) {
         console.error(`Error extracting features from ${uri}:`, error);
       }
