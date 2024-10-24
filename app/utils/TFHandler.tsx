@@ -1,7 +1,6 @@
 import * as tf from '@tensorflow/tfjs';
 import '@tensorflow/tfjs-react-native';
 import * as mobilenet from '@tensorflow-models/mobilenet';
-import { bundleResourceIO } from '@tensorflow/tfjs-react-native';
 import * as FileSystem from 'expo-file-system';
 import * as jpeg from 'jpeg-js';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -11,7 +10,7 @@ export class TFHandler {
   private isModelReady: boolean = false;
 
   constructor() {
-    // this.init();
+    // Initialization is handled externally
   }
 
   /**
@@ -34,7 +33,7 @@ export class TFHandler {
   /**
    * Preprocess a single image.
    * @param imageUri URI of the image to preprocess.
-   * @returns Tensor3D of the preprocessed image.
+   * @returns Tensor3D of the preprocessed image and its base64 representation.
    */
   private async preprocessImage(imageUri: string): Promise<{ preprocessedImage: tf.Tensor3D, base64: string }> {
     try {
@@ -67,7 +66,7 @@ export class TFHandler {
   /**
    * Extract features from a single image.
    * @param imageUri URI of the image.
-   * @returns Tensor of extracted features.
+   * @returns Flattened tensor of extracted features and the image's base64 string.
    */
   public async extractFeatures(imageUri: string): Promise<{ features: tf.Tensor | null, base64: string | null }> {
     if (!this.isModelReady || !this.model) {
@@ -99,7 +98,7 @@ export class TFHandler {
    * Extract features from multiple images in batches.
    * @param imageUris Array of image URIs.
    * @param batchSize Number of images to process per batch.
-   * @returns Array of feature tensors.
+   * @returns Array of feature tensors along with base64 and URI.
    */
   public async extractFeaturesBatch(
     imageUris: string[],
@@ -115,7 +114,7 @@ export class TFHandler {
 
     for (let i = 0; i < totalImages; i += batchSize) {
       const batchUris = imageUris.slice(i, i + batchSize);
-      console.log(`Processing batch ${i / batchSize + 1} (${batchUris.length} images)`);
+      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (${batchUris.length} images)`);
 
       try {
         // Process each image in the batch
@@ -138,7 +137,7 @@ export class TFHandler {
           )
           .map(result => result.value);
 
-        if (successfulResults.length < batchSize) {
+        if (successfulResults.length === 0) {
           console.log('No images successfully preprocessed in this batch');
           continue;
         }
