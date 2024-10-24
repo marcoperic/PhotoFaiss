@@ -70,36 +70,43 @@ export default function HomeScreen() {
 
     const uriList = photoLoader.getPhotoURIs();
     const total = uriList.length;
-    let processed = 0;
     const extractedFeatures: number[][] = [];
     const recentProcessed: { uri: string, base64: string }[] = [];
 
     setFeatureLoadingProgress(0);
 
-    for (const uri of uriList) {
-      try {
-        const { features: featureTensor, base64 } = await tfHandler.extractFeatures(uri);
-        if (featureTensor && base64) {
+    try {
+      const BATCH_SIZE = 2;
+      const batchResults = await tfHandler.extractFeaturesBatch(uriList, BATCH_SIZE);
+
+      for (let i = 0; i < batchResults.length; i++) {
+        const { features: featureTensor, base64, uri } = batchResults[i];
+        try {
           const featureArray = Array.from(await featureTensor.dataSync());
           extractedFeatures.push(featureArray);
-          featureTensor.dispose();
-          console.info(`Extracted features for image: ${uri}`);
           
+          // Update recent images
           recentProcessed.unshift({ uri, base64 });
           if (recentProcessed.length > 2) {
             recentProcessed.pop();
           }
           setRecentImages(recentProcessed);
+        } catch (error) {
+          console.error(`Error processing feature tensor for ${uri}:`, error);
+        } finally {
+          // Clean up tensor
+          featureTensor.dispose();
         }
-      } catch (error) {
-        console.error(`Error extracting features from ${uri}:`, error);
+        
+        // Update progress based on total images, not just successful ones
+        setFeatureLoadingProgress((i + 1) / total);
       }
-      processed += 1;
-      setFeatureLoadingProgress(processed / total);
-    }
 
-    setFeatures(extractedFeatures);
-    console.log('Feature extraction completed.');
+      setFeatures(extractedFeatures);
+      console.log(`Feature extraction completed. Successfully processed ${extractedFeatures.length} out of ${total} images.`);
+    } catch (error) {
+      console.error('Error in batch processing:', error);
+    }
   }, [photoLoader, tfHandler, modelLoaded]);
 
   const renderContent = () => (
