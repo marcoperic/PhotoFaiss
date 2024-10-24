@@ -36,9 +36,8 @@ export class TFHandler {
    * @param imageUri URI of the image to preprocess.
    * @returns Tensor3D of the preprocessed image.
    */
-  private async preprocessImage(imageUri: string): Promise<tf.Tensor3D> {
+  private async preprocessImage(imageUri: string): Promise<{ preprocessedImage: tf.Tensor3D, base64: string }> {
     try {
-      // First manipulate the image to ensure it's in a readable format
       const manipulatedImage = await ImageManipulator.manipulateAsync(
         imageUri,
         [{ resize: { width: 224, height: 224 } }],
@@ -48,6 +47,7 @@ export class TFHandler {
       const imgB64 = await FileSystem.readAsStringAsync(manipulatedImage.uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
+
       const imgBuffer = tf.util.encodeString(imgB64, 'base64').buffer;
       const raw = new Uint8Array(imgBuffer);
       const { width, height, data } = jpeg.decode(raw, { useTArray: true });
@@ -57,7 +57,7 @@ export class TFHandler {
       imgTensor = tf.image.resizeBilinear(imgTensor, [224, 224]);
       imgTensor = imgTensor.toFloat().div(tf.scalar(127)).sub(tf.scalar(1));
 
-      return imgTensor;
+      return { preprocessedImage: imgTensor, base64: imgB64 };
     } catch (error) {
       console.error('Error preprocessing image:', error);
       throw error;
@@ -69,20 +69,32 @@ export class TFHandler {
    * @param imageUri URI of the image.
    * @returns Tensor of extracted features.
    */
-  public async extractFeatures(imageUri: string): Promise<tf.Tensor | null> {
+  public async extractFeatures(imageUri: string): Promise<{ features: tf.Tensor | null, base64: string | null }> {
     if (!this.isModelReady || !this.model) {
       console.warn('Model is not ready yet.');
-      return null;
+      return { features: null, base64: null };
     }
 
     try {
-      const preprocessedImage = await this.preprocessImage(imageUri);
+      const { preprocessedImage, base64 } = await this.preprocessImage(imageUri);
+      console.log('Preprocessed image shape:', preprocessedImage.shape);
+      
       const features = this.model.infer(preprocessedImage, true) as tf.Tensor;
-      preprocessedImage.dispose(); // Dispose the tensor to free memory
-      return features.flatten(); // Ensure we return a flattened tensor
+      console.log('Extracted features shape:', features.shape);
+      
+      // Get the actual size of the first dimension
+      const [firstDim] = features.shape;
+      // Take min between 5 and actual size
+      const sampleSize = Math.min(5, firstDim);
+      
+      const sampleValues = await features.slice([0], [sampleSize]).data();
+      console.log('Sample feature values:', Array.from(sampleValues));
+      
+      preprocessedImage.dispose();
+      return { features: features.flatten(), base64 };
     } catch (error) {
       console.error('Error extracting features:', error);
-      return null;
+      return { features: null, base64: null };
     }
   }
 

@@ -22,6 +22,7 @@ export default function HomeScreen() {
   const [isWeb, setIsWeb] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [features, setFeatures] = useState<number[][]>([]);
+  const [recentImages, setRecentImages] = useState<{ uri: string, base64: string }[]>([]);
 
   useEffect(() => {
     const initializeHandlers = async () => {
@@ -71,17 +72,24 @@ export default function HomeScreen() {
     const total = uriList.length;
     let processed = 0;
     const extractedFeatures: number[][] = [];
+    const recentProcessed: { uri: string, base64: string }[] = [];
 
     setFeatureLoadingProgress(0);
 
     for (const uri of uriList) {
       try {
-        const featureTensor = await tfHandler.extractFeatures(uri);
-        if (featureTensor) {
+        const { features: featureTensor, base64 } = await tfHandler.extractFeatures(uri);
+        if (featureTensor && base64) {
           const featureArray = Array.from(await featureTensor.dataSync());
           extractedFeatures.push(featureArray);
-          featureTensor.dispose(); // Dispose tensor after extraction
+          featureTensor.dispose();
           console.info(`Extracted features for image: ${uri}`);
+          
+          recentProcessed.unshift({ uri, base64 });
+          if (recentProcessed.length > 2) {
+            recentProcessed.pop();
+          }
+          setRecentImages(recentProcessed);
         }
       } catch (error) {
         console.error(`Error extracting features from ${uri}:`, error);
@@ -132,6 +140,27 @@ export default function HomeScreen() {
           <ThemedText style={styles.featuresText}>
             Extracted features for {features.length} images.
           </ThemedText>
+        )}
+        {recentImages.length > 0 && (
+          <View style={styles.recentImagesContainer}>
+            <ThemedText style={styles.sectionTitle}>Recently Processed Images</ThemedText>
+            <View style={styles.recentImagesGrid}>
+              {recentImages.map((img, index) => (
+                <View key={index} style={styles.imageContainer}>
+                  <Image
+                    source={{ uri: img.uri }}
+                    style={styles.recentImage}
+                    resizeMode="cover"
+                  />
+                  <Image
+                    source={{ uri: `data:image/jpeg;base64,${img.base64}` }}
+                    style={styles.recentImage}
+                    resizeMode="cover"
+                  />
+                </View>
+              ))}
+            </View>
+          </View>
         )}
       </ScrollView>
     </>
@@ -200,5 +229,25 @@ const styles = StyleSheet.create({
   featuresText: {
     marginTop: 10,
     fontStyle: 'italic',
+  },
+  recentImagesContainer: {
+    width: '100%',
+    marginTop: 20,
+  },
+  recentImagesGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 10,
+  },
+  recentImage: {
+    width: width * 0.4,
+    height: width * 0.4,
+    borderRadius: 8,
+    marginHorizontal: 5,
+  },
+  imageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
   },
 });
