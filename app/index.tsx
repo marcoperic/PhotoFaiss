@@ -18,6 +18,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import PhotoLoader from './utils/PhotoLoader';
 import { TFHandler } from './utils/TFHandler';
+import { logMemoryUsage } from './utils/memoryUtils';
 
 const { width } = Dimensions.get('window');
 const imageSize = width * 0.8;
@@ -88,19 +89,17 @@ export default function HomeScreen() {
     if (!tfHandler || !modelLoaded) return;
 
     try {
+      console.log('\nInitial memory status:');
+      logMemoryUsage();
+
       const batchSize = 2;
-      const batchResults = await tfHandler.extractFeaturesBatch(photoURIs, batchSize);
-
-      const extractedFeatures: number[][] = [];
-      for (const result of batchResults) {
-        if (result.features) {
-          const featureArray = Array.from(await result.features.data());
-          extractedFeatures.push(featureArray);
-        }
-      }
-
-      setFeatures(extractedFeatures);
-      console.log(`Extracted features for ${extractedFeatures.length} images.`);
+      const results = await tfHandler.extractFeaturesBatch(photoURIs, batchSize);
+      setFeatures(prevFeatures => [...prevFeatures, ...results.map(r => r.features)]);
+      
+      console.log('\nFinal memory status:');
+      logMemoryUsage();
+      
+      console.log(`Extracted features for ${results.length} additional images.`);
     } catch (error) {
       console.error('Error extracting all features:', error);
     }

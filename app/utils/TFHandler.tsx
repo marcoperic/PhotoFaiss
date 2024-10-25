@@ -4,6 +4,7 @@ import * as mobilenet from '@tensorflow-models/mobilenet';
 import * as FileSystem from 'expo-file-system';
 import * as jpeg from 'jpeg-js';
 import * as ImageManipulator from 'expo-image-manipulator';
+import { logMemoryUsage } from './memoryUtils';
 
 export class TFHandler {
   private model: mobilenet.MobileNet | null = null;
@@ -35,7 +36,7 @@ export class TFHandler {
    * @param imageUri URI of the image to preprocess.
    * @returns Tensor3D of the preprocessed image and its base64 representation.
    */
-  private async preprocessImage(imageUri: string): Promise<{ preprocessedImage: tf.Tensor3D, base64: string }> {
+  private async preprocessImage(imageUri: string): Promise<{ preprocessedImage: tf.Tensor, base64: string }> {
     try {
       const manipulatedImage = await ImageManipulator.manipulateAsync(
         imageUri,
@@ -51,12 +52,15 @@ export class TFHandler {
       const raw = new Uint8Array(imgBuffer);
       const { width, height, data } = jpeg.decode(raw, { useTArray: true });
 
-      let imgTensor = tf.tensor3d(data, [height, width, 4]);
-      imgTensor = imgTensor.slice([0, 0, 0], [-1, -1, 3]);
-      imgTensor = tf.image.resizeBilinear(imgTensor, [224, 224]);
-      imgTensor = imgTensor.toFloat().div(tf.scalar(127)).sub(tf.scalar(1));
+      // Wrap tensor operations in tf.tidy to automatically clean up intermediate tensors
+      const preprocessedImage = tf.tidy(() => {
+        const imgTensor = tf.tensor3d(data, [height, width, 4]);
+        const slicedTensor = imgTensor.slice([0, 0, 0], [-1, -1, 3]);
+        const resizedTensor = tf.image.resizeBilinear(slicedTensor, [224, 224]);
+        return resizedTensor.toFloat().div(tf.scalar(127)).sub(tf.scalar(1));
+      });
 
-      return { preprocessedImage: imgTensor, base64: imgB64 };
+      return { preprocessedImage, base64: imgB64 };
     } catch (error) {
       console.error('Error preprocessing image:', error);
       throw error;
@@ -103,22 +107,29 @@ export class TFHandler {
   public async extractFeaturesBatch(
     imageUris: string[],
     batchSize: number = 2
-  ): Promise<{ features: tf.Tensor, base64: string, uri: string }[]> {
+  ): Promise<{ features: number[], base64: string, uri: string }[]> {
     if (!this.isModelReady || !this.model) {
       console.warn('Model is not ready yet.');
       return [];
     }
 
-    const results: { features: tf.Tensor, base64: string, uri: string }[] = [];
+    const results: { features: number[], base64: string, uri: string }[] = [];
     const totalImages = imageUris.length;
 
-    for (let i = 0; i < totalImages; i += batchSize) {
-      const batchUris = imageUris.slice(i, i + batchSize);
-      console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (${batchUris.length} images)`);
+    try {
+      for (let i = 0; i < totalImages; i += batchSize) {
+        const batchUris = imageUris.slice(i, i + batchSize);
+        console.log(`Processing batch ${Math.floor(i / batchSize) + 1} (${batchUris.length} images)`);
 
-      try {
+        // Log memory usage every 5 batches
+        if (i % (batchSize * 5) === 0) {
+          console.log(`\nMemory status after ${i} images:`);
+          logMemoryUsage();
+          console.log(`TensorFlow.js memory:`, tf.memory());
+        }
+
         // Process each image in the batch
-        const preprocessedResults = await Promise.allSettled(
+        const preprocessedResults = await Promise.all(
           batchUris.map(async (uri) => {
             try {
               const result = await this.preprocessImage(uri);
@@ -129,51 +140,40 @@ export class TFHandler {
             }
           })
         );
-        
-        // Filter out failed preprocessed images
-        const successfulResults = preprocessedResults
-          .filter((result): result is PromiseFulfilledResult<{ preprocessedImage: tf.Tensor3D, base64: string, uri: string, success: true }> => 
-            result.status === 'fulfilled' && result.value.success
-          )
-          .map(result => result.value);
 
-        if (successfulResults.length === 0) {
-          console.log('No images successfully preprocessed in this batch');
-          continue;
-        }
-
-        // Extract just the tensors for stacking
-        const tensors = successfulResults.map(result => result.preprocessedImage);
-        
-        try {
-          // Use tf.tidy to automatically clean up intermediate tensors
-          const batchFeatures = tf.tidy(() => {
-            const batchedImages = tf.stack(tensors);
-            const features = this.model!.infer(batchedImages, true) as tf.Tensor;
-            // Split the features back into individual tensors
-            return tf.split(features, features.shape[0]);
-          });
-
-          // Create results array with features and base64 data
-          for (let j = 0; j < successfulResults.length; j++) {
-            results.push({
-              features: batchFeatures[j],
-              base64: successfulResults[j].base64,
-              uri: successfulResults[j].uri
+        // Extract features and immediately convert to regular arrays
+        for (const result of preprocessedResults) {
+          if ('preprocessedImage' in result) {
+            const features = tf.tidy(() => {
+              const extracted = this.model!.infer(result.preprocessedImage, true) as tf.Tensor;
+              return extracted.dataSync(); // Convert to regular array immediately
             });
+            
+            results.push({
+              features: Array.from(features),
+              base64: result.base64,
+              uri: result.uri
+            });
+            
+            // Dispose of the preprocessed image immediately
+            result.preprocessedImage.dispose();
           }
-        } catch (error) {
-          console.error('Error processing batch features:', error);
-        } finally {
-          // Clean up preprocessed image tensors
-          tensors.forEach(tensor => tensor.dispose());
         }
 
-        // Add a small delay between batches
+        // Force garbage collection between batches
+        tf.engine().startScope();
+        tf.engine().endScope();
         await new Promise(resolve => setTimeout(resolve, 100));
-      } catch (error) {
-        console.error(`Error processing batch starting at index ${i}:`, error);
+        
+        // Log memory after garbage collection
+        if (i % (batchSize * 5) === 0) {
+          console.log(`\nMemory status after GC:`);
+          logMemoryUsage();
+          console.log(`TensorFlow.js tensors:`, tf.memory().numTensors);
+        }
       }
+    } finally {
+      tf.engine().endScope();
     }
 
     return results;
