@@ -1,27 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, StyleSheet, Image, Dimensions, View, Platform, ScrollView } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { Button, StyleSheet, Dimensions, View, ScrollView } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
-import { Ionicons } from '@expo/vector-icons';
+import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import PhotoLoader from './utils/PhotoLoader';
-import TFHandler from './utils/TFHandler';
+import ImageProcessor from './utils/ImageProcessor';
+import APIClient from './utils/APIClient';
 
 const { width } = Dimensions.get('window');
-const imageSize = width * 0.8;
 
 export default function HomeScreen() {
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [photoLoader, setPhotoLoader] = useState<PhotoLoader | null>(null);
-  const [tfHandler, setTfHandler] = useState<TFHandler | null>(null);
   const [photoLoadingProgress, setPhotoLoadingProgress] = useState(0);
-  const [featureLoadingProgress, setFeatureLoadingProgress] = useState(0);
+  const [processingProgress, setProcessingProgress] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isWeb, setIsWeb] = useState(false);
-  const [modelLoaded, setModelLoaded] = useState(false);
-  const [features, setFeatures] = useState<number[][]>([]);
 
   useEffect(() => {
     const initializeHandlers = async () => {
@@ -37,17 +33,9 @@ export default function HomeScreen() {
 
       const loader = new PhotoLoader();
       setPhotoLoader(loader);
-      const tf = new TFHandler();
-      setTfHandler(tf);
 
       try {
-        // Initialize PhotoLoader and TFHandler concurrently
-        await Promise.all([
-          loader.initialize((progress: number) => setPhotoLoadingProgress(progress)),
-          tf.init().then(() => {
-            setModelLoaded(true);
-          })
-        ]);
+        await loader.initialize((progress: number) => setPhotoLoadingProgress(progress));
       } catch (error) {
         console.error('Error initializing:', error);
         if (Platform.OS !== 'web') {
@@ -59,31 +47,37 @@ export default function HomeScreen() {
     initializeHandlers();
   }, []);
 
-  const extractFeatures = useCallback(async () => {
-    if (!photoLoader || !tfHandler || !modelLoaded) return;
+  const processImages = useCallback(async () => {
+    if (!photoLoader) return;
 
     const uriList = photoLoader.getPhotoURIs();
     const total = uriList.length;
     let processed = 0;
-    const extractedFeatures: number[][] = [];
 
-    setFeatureLoadingProgress(0);
+    setProcessingProgress(0);
+    console.log('Starting image preprocessing...');
 
-    for (const uri of uriList) {
-      try {
-        const feature = await tfHandler.extract_features(uri);
-        extractedFeatures.push(feature);
-        console.info(`Extracted features for image: ${uri}`);
-      } catch (error) {
-        console.error(`Error extracting features from ${uri}:`, error);
-      }
-      processed += 1;
-      setFeatureLoadingProgress(processed / total);
+    try {
+      const imageProcessor = new ImageProcessor();
+      const apiClient = new APIClient();
+
+      console.log(`Processing ${total} images...`);
+      const { uri: zipUri, size: zipSize } = await imageProcessor.createImageZip(uriList);
+      console.log(`Created zip file of size: ${(zipSize / (1024 * 1024)).toFixed(2)} MB`);
+      
+      const response = await apiClient.uploadImages(zipUri);
+      const result = await response.json();
+      
+      console.log('Upload completed:', result);
+      setProcessingProgress(1);
+
+      await FileSystem.deleteAsync(zipUri);
+      
+    } catch (error) {
+      console.error('Error processing images:', error);
+      setProcessingProgress(0);
     }
-
-    setFeatures(extractedFeatures);
-    console.log('Feature extraction completed.');
-  }, [photoLoader, tfHandler, modelLoaded]);
+  }, [photoLoader]);
 
   const renderContent = () => (
     <>
@@ -94,36 +88,38 @@ export default function HomeScreen() {
             <View style={[styles.progressBar, { width: `${photoLoadingProgress * 100}%` }]} />
           </View>
           <ThemedText>
-            {photoLoadingProgress < 1 ? `Loading Photos: ${(photoLoadingProgress * 100).toFixed(0)}%` : 'Photos Loaded'}
+            {photoLoadingProgress < 1 
+              ? `Loading Photos: ${(photoLoadingProgress * 100).toFixed(0)}%` 
+              : 'Photos Loaded'}
           </ThemedText>
         </View>
         <View style={styles.progressContainer}>
-          <ThemedText style={styles.sectionTitle}>Feature Extraction Progress</ThemedText>
+          <ThemedText style={styles.sectionTitle}>Processing Progress</ThemedText>
           <View style={styles.progressBarContainer}>
-            <View style={[styles.progressBar, { width: `${featureLoadingProgress * 100}%`, backgroundColor: '#2196f3' }]} />
+            <View style={[
+              styles.progressBar, 
+              { 
+                width: `${processingProgress * 100}%`, 
+                backgroundColor: processingProgress < 1 ? '#2196f3' : '#4caf50' 
+              }]} 
+            />
           </View>
           <ThemedText>
-            {featureLoadingProgress > 0 && featureLoadingProgress < 1
-              ? `Extracting Features: ${(featureLoadingProgress * 100).toFixed(0)}%`
-              : featureLoadingProgress === 1
-              ? 'Feature Extraction Completed'
+            {processingProgress > 0 && processingProgress < 1
+              ? `Processing Images: ${(processingProgress * 100).toFixed(0)}%`
+              : processingProgress === 1
+              ? 'Processing Completed'
               : ''}
           </ThemedText>
         </View>
-        <View style={styles.modelIndicator}>
-          <Ionicons 
-            name={modelLoaded ? "checkmark-circle" : "ellipsis-horizontal-circle"} 
-            size={24} 
-            color={modelLoaded ? "#4caf50" : "#ffa000"} 
-          />
-          <ThemedText>{modelLoaded ? "Model Loaded" : "Loading Model"}</ThemedText>
-        </View>
-        <Button title="Extract Features" onPress={extractFeatures} disabled={!modelLoaded || (featureLoadingProgress > 0 && featureLoadingProgress < 1)} />
-        {features.length > 0 && (
-          <ThemedText style={styles.featuresText}>
-            Extracted features for {features.length} images.
-          </ThemedText>
-        )}
+        <Button 
+          title="Process Images" 
+          onPress={processImages} 
+          disabled={processingProgress > 0 && processingProgress < 1} 
+        />
+        <ThemedText style={styles.note}>
+          Processing a maximum of 500 images.
+        </ThemedText>
       </ScrollView>
     </>
   );
@@ -156,12 +152,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 20,
   },
-  image: {
-    width: imageSize,
-    height: imageSize,
-    marginTop: 20,
-    borderRadius: 10,
-  },
   progressContainer: {
     width: '100%',
     marginBottom: 20,
@@ -183,13 +173,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#4caf50',
     borderRadius: 5,
   },
-  modelIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  featuresText: {
+  note: {
     marginTop: 10,
-    fontStyle: 'italic',
+    fontSize: 14,
+    color: '#555',
   },
 });

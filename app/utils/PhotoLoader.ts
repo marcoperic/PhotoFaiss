@@ -4,6 +4,7 @@ class PhotoLoader {
   private photoURIs: string[];
   private totalPhotos: number;
   private loadedPhotos: number;
+  private readonly MAX_IMAGES = 500; // Maximum number of images to load
 
   constructor() {
     this.photoURIs = [];
@@ -12,7 +13,7 @@ class PhotoLoader {
   }
 
   /**
-   * Initializes and loads all photos.
+   * Initializes and loads all photos up to MAX_IMAGES.
    * @param onProgress - Callback to update loading progress.
    */
   async initialize(onProgress?: (progress: number) => void) {
@@ -20,7 +21,7 @@ class PhotoLoader {
   }
 
   /**
-   * Loads all photos with optional progress updates.
+   * Loads photos with optional progress updates, up to MAX_IMAGES.
    * @param onProgress - Callback to update loading progress.
    */
   async loadAllPhotos(onProgress?: (progress: number) => void) {
@@ -31,15 +32,19 @@ class PhotoLoader {
 
     let hasMorePhotos = true;
     let endCursor: string | undefined = undefined;
-    while (hasMorePhotos) {
+    while (hasMorePhotos && this.loadedPhotos < this.MAX_IMAGES) {
+      const remaining = this.MAX_IMAGES - this.loadedPhotos;
+      const fetchCount = remaining >= 1000 ? 1000 : remaining; // Fetch up to 1000 or the remaining count
+
       const { assets, endCursor: newEndCursor, hasNextPage, totalCount } = await MediaLibrary.getAssetsAsync({
         mediaType: 'photo',
         after: endCursor,
-        first: 1000, // Fetch in batches of 1000
+        first: fetchCount,
       });
+
       this.photoURIs = [...this.photoURIs, ...assets.map(asset => asset.uri)];
       this.loadedPhotos += assets.length;
-      this.totalPhotos = totalCount;
+      this.totalPhotos = Math.min(totalCount, this.MAX_IMAGES); // Update totalPhotos to not exceed MAX_IMAGES
       console.log(`Loaded ${this.loadedPhotos} photos out of ${this.totalPhotos}`);
 
       if (onProgress) {
@@ -47,16 +52,30 @@ class PhotoLoader {
       }
 
       endCursor = newEndCursor;
-      hasMorePhotos = hasNextPage;
+      hasMorePhotos = hasNextPage && this.loadedPhotos < this.MAX_IMAGES;
+    }
+
+    // If reached the maximum limit, log it
+    if (this.loadedPhotos >= this.MAX_IMAGES) {
+      console.log(`Reached the maximum limit of ${this.MAX_IMAGES} images.`);
     }
   }
 
-  getPhotoURIs(): string[] {
-    return this.photoURIs;
+  /**
+   * Gets the loading progress as a value between 0 and 1.
+   * @returns Progress value.
+   */
+  private getProgress(): number {
+    if (this.totalPhotos === 0) return 0;
+    return this.loadedPhotos / this.totalPhotos;
   }
 
-  getProgress(): number {
-    return this.totalPhotos > 0 ? this.loadedPhotos / this.totalPhotos : 0;
+  /**
+   * Returns the loaded photo URIs.
+   * @returns Array of photo URIs.
+   */
+  getPhotoURIs(): string[] {
+    return this.photoURIs;
   }
 }
 
