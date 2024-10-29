@@ -20,8 +20,10 @@ import time
 app = FastAPI()
 
 # Load the ResNet model (moved outside of function for efficiency)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = models.resnet101(pretrained=True)
 model = torch.nn.Sequential(*list(model.children())[:-1])
+model.to(device)
 model.eval()
 
 # Define transforms
@@ -31,10 +33,11 @@ transform = transforms.Compose([
 ])
 
 def extract_features(image):
-    image = transform(image).unsqueeze(0)
+    image = transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
-        features = model(image).squeeze().numpy()
-    return features.flatten()
+        features = model(image)
+        features = features.squeeze()  # Keep on GPU
+    return features.cpu().numpy().flatten()  # Only move to CPU at the final step
 
 # In-memory storage for uploaded images
 image_storage: Dict[str, Dict[str, bytes]] = {}
@@ -78,6 +81,10 @@ async def upload_images(file: UploadFile = File(...)):
                     print(f"- {filename}")
                 
                 print("\nProcessing files...")
+                
+                # Start timing the feature extraction
+                feature_extraction_start_time = time.time()
+                
                 for filename in file_list:
                     # Skip directories and hidden files
                     if filename.endswith('/') or filename.startswith('.'): 
@@ -105,7 +112,11 @@ async def upload_images(file: UploadFile = File(...)):
                             print(f"Error type: {type(e)}")
                     else:
                         print(f"Skipping {filename} (not an image file)")
-
+                
+                # End timing the feature extraction
+                feature_extraction_time = time.time() - feature_extraction_start_time
+                print(f"Feature extraction completed in {feature_extraction_time:.2f} seconds")
+                
             print(f"\nTotal features collected: {len(image_features)}")
 
         # Create FAISS index
