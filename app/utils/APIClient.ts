@@ -4,7 +4,7 @@ class APIClient {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = 'http://0.0.0.0:8000'; // Replace with your machine's IP
+    this.baseUrl = 'http://172.16.116.18:8000'; // Replace with your machine's IP
   }
 
   async uploadImages(zipUri: string): Promise<Response> {

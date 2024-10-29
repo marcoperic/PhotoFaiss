@@ -4,7 +4,7 @@ class PhotoLoader {
   private photoURIs: string[];
   private totalPhotos: number;
   private loadedPhotos: number;
-  private readonly MAX_IMAGES = 500; // Maximum number of images to load
+  private readonly MAX_IMAGES = 10; // Maximum number of images to load
 
   constructor() {
     this.photoURIs = [];
