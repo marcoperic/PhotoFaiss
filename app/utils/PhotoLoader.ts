@@ -4,7 +4,7 @@ class PhotoLoader {
   private photoURIs: string[];
   private totalPhotos: number;
   private loadedPhotos: number;
-  private readonly MAX_IMAGES = 500; // Maximum number of images to load
+  private MAX_IMAGES = -1; // Maximum number of images to load
 
   constructor() {
     this.photoURIs = [];
@@ -32,9 +32,9 @@ class PhotoLoader {
 
     let hasMorePhotos = true;
     let endCursor: string | undefined = undefined;
-    while (hasMorePhotos && this.loadedPhotos < this.MAX_IMAGES) {
-      const remaining = this.MAX_IMAGES - this.loadedPhotos;
-      const fetchCount = remaining >= 1000 ? 1000 : remaining; // Fetch up to 1000 or the remaining count
+    while (hasMorePhotos && (this.MAX_IMAGES === -1 || this.loadedPhotos < this.MAX_IMAGES)) {
+      const remaining = this.MAX_IMAGES === -1 ? 1000 : this.MAX_IMAGES - this.loadedPhotos;
+      const fetchCount = remaining >= 1000 ? 1000 : remaining;
 
       const { assets, endCursor: newEndCursor, hasNextPage, totalCount } = await MediaLibrary.getAssetsAsync({
         mediaType: 'photo',
@@ -44,7 +44,7 @@ class PhotoLoader {
 
       this.photoURIs = [...this.photoURIs, ...assets.map(asset => asset.uri)];
       this.loadedPhotos += assets.length;
-      this.totalPhotos = Math.min(totalCount, this.MAX_IMAGES); // Update totalPhotos to not exceed MAX_IMAGES
+      this.totalPhotos = this.MAX_IMAGES === -1 ? totalCount : Math.min(totalCount, this.MAX_IMAGES);
       console.log(`Loaded ${this.loadedPhotos} photos out of ${this.totalPhotos}`);
 
       if (onProgress) {
@@ -52,11 +52,11 @@ class PhotoLoader {
       }
 
       endCursor = newEndCursor;
-      hasMorePhotos = hasNextPage && this.loadedPhotos < this.MAX_IMAGES;
+      hasMorePhotos = hasNextPage && (this.MAX_IMAGES === -1 || this.loadedPhotos < this.MAX_IMAGES);
     }
 
-    // If reached the maximum limit, log it
-    if (this.loadedPhotos >= this.MAX_IMAGES) {
+    // Modified log message to handle unlimited case
+    if (this.loadedPhotos >= this.MAX_IMAGES && this.MAX_IMAGES !== -1) {
       console.log(`Reached the maximum limit of ${this.MAX_IMAGES} images.`);
     }
   }
