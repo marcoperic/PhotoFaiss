@@ -1,9 +1,12 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
+from typing import Dict, List
 import shutil
 import zipfile
 import os
-from typing import Dict
+
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+
 import tempfile
 import uuid
 import torch
@@ -12,10 +15,9 @@ import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
 import faiss
-import base64
-import io
 import secrets
 import time
+import json
 
 app = FastAPI()
 
@@ -42,8 +44,14 @@ def extract_features(image):
 # In-memory storage for uploaded images
 image_storage: Dict[str, Dict[str, bytes]] = {}
 
+# Store just the index and paths as global variables
+faiss_index = None
+image_paths = []
+
 @app.post("/imgUpload")
 async def upload_images(file: UploadFile = File(...)):
+    global faiss_index, image_paths
+    
     try:
         # Verify if the uploaded file is a zip
         print(f"Received file: {file.filename}")
@@ -69,54 +77,58 @@ async def upload_images(file: UploadFile = File(...)):
             
             print("Starting to extract files from zip...")
             
-            # Lists to store features and paths
-            image_features = []
-            valid_image_paths = []
-            
-            # Extract and process images
+            # Extract the zip file
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                file_list = zip_ref.namelist()
-                print(f"\nFiles found in archive: {len(file_list)}")
-                for filename in file_list:
-                    print(f"- {filename}")
+                zip_ref.extractall(temp_dir)
+                print("Extraction complete.")
+
+            # Load the manifest.json
+            manifest_path = os.path.join(temp_dir, "manifest.json")
+            if not os.path.exists(manifest_path):
+                return JSONResponse(
+                    status_code=400,
+                    content={"message": "manifest.json not found in the ZIP file"}
+                )
+            
+            with open(manifest_path, 'r') as f:
+                manifest = json.load(f)
+                print(f"Loaded manifest with {len(manifest)} entries.")
+
+            # Lists to store features and original uris
+            image_features = []
+            valid_image_paths_local = []
+
+            print("\nProcessing images...")
+            
+            # Start timing the feature extraction
+            feature_extraction_start_time = time.time()
+            
+            for processed_filename, original_uri in manifest.items():
+                processed_file_path = os.path.join(temp_dir, processed_filename)
                 
-                print("\nProcessing files...")
-                
-                # Start timing the feature extraction
-                feature_extraction_start_time = time.time()
-                
-                for filename in file_list:
-                    # Skip directories and hidden files
-                    if filename.endswith('/') or filename.startswith('.'): 
-                        print(f"Skipping {filename} (directory or hidden file)")
-                        continue
+                if not os.path.exists(processed_file_path):
+                    print(f"Processed file {processed_filename} not found. Skipping.")
+                    continue
+
+                try:
+                    print(f"Processing image: {processed_filename} mapped to {original_uri}")
+                    image = Image.open(processed_file_path).convert('RGB')
                     
-                    # Only process image files
-                    if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-                        print(f"Processing image: {filename}")
-                        try:
-                            with zip_ref.open(filename) as image_file:
-                                # Read image and convert to PIL
-                                image_data = image_file.read()
-                                print(f"Read {len(image_data)} bytes for {filename}")
-                                image = Image.open(io.BytesIO(image_data)).convert('RGB')
-                                
-                                # Extract features
-                                features = extract_features(image)
-                                print(f"Features shape for {filename}: {features.shape}")
-                                image_features.append(features)
-                                valid_image_paths.append(filename)
-                                print(f"✓ Successfully added features for {filename}")
-                        except Exception as e:
-                            print(f"Error processing {filename}: {str(e)}")
-                            print(f"Error type: {type(e)}")
-                    else:
-                        print(f"Skipping {filename} (not an image file)")
-                
-                # End timing the feature extraction
-                feature_extraction_time = time.time() - feature_extraction_start_time
-                print(f"Feature extraction completed in {feature_extraction_time:.2f} seconds")
-                
+                    # Extract features
+                    features = extract_features(image)
+                    print(f"Features extracted for {processed_filename}: {features.shape}")
+                    image_features.append(features)
+                    valid_image_paths_local.append(original_uri)  # Use original URI
+                    print(f"✓ Successfully added features for {processed_filename}")
+
+                except Exception as e:
+                    print(f"Error processing {processed_filename}: {str(e)}")
+                    print(f"Error type: {type(e)}")
+
+            # End timing the feature extraction
+            feature_extraction_time = time.time() - feature_extraction_start_time
+            print(f"Feature extraction completed in {feature_extraction_time:.2f} seconds")
+            
             print(f"\nTotal features collected: {len(image_features)}")
 
         # Create FAISS index
@@ -126,30 +138,24 @@ async def upload_images(file: UploadFile = File(...)):
             
             image_features = np.array(image_features).astype('float32')
             dimension = image_features.shape[1]
-            index = faiss.IndexFlatL2(dimension)
-            index.add(image_features)
+            faiss_index = faiss.IndexFlatL2(dimension)
+            faiss_index.add(image_features)  # Vectors are stored at indices 0, 1, 2, ...
+            image_paths = valid_image_paths_local  # Store original URIs in the same order as vectors
             
             build_time = time.time() - start_time
             print(f"FAISS index built in {build_time:.2f} seconds")
             
-            # Serialize the index
-            # print("Serializing FAISS index...")
-            # index_buffer = io.BytesIO()
-            # faiss.write_index(index, index_buffer)
-            # index_bytes = index_buffer.getvalue()
-            # index_base64 = base64.b64encode(index_bytes).decode('utf-8')
-            
             # Generate token
             token = secrets.token_hex(8)  # 16 characters
             
-            print(f"\nIndex creation complete! Processed {len(valid_image_paths)} images")
+            print(f"\nIndex creation complete! Processed {len(valid_image_paths_local)} images")
             return JSONResponse(
                 status_code=200,
                 content={
                     "message": "Images processed and index created successfully",
                     "token": token,
-                    "image_count": len(valid_image_paths),
-                    "processed_files": valid_image_paths
+                    "image_count": len(valid_image_paths_local),
+                    "processed_files": valid_image_paths_local
                 }
             )
         else:
@@ -164,6 +170,82 @@ async def upload_images(file: UploadFile = File(...)):
             status_code=500,
             content={"message": f"An error occurred: {str(e)}"}
         )
+
+@app.post("/search")
+async def search_similar_images(file: UploadFile = File(...), k: int = 5):
+    try:
+        if faiss_index is None:
+            return JSONResponse(
+                status_code=500,
+                content={"message": "FAISS index is not initialized. Please upload images first."}
+            )
+        
+        # Save the uploaded image to a temporary directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = os.path.join(temp_dir, file.filename)
+            with open(image_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            print(f"Saved query image to: {image_path}")
+
+            # Open and preprocess the image
+            image = Image.open(image_path).convert('RGB')
+            features = extract_features(image)
+            print(f"Extracted features from query image: {features.shape}")
+
+        # Convert features to the correct format
+        query_vector = np.array(features).astype('float32').reshape(1, -1)
+
+        # Perform FAISS search
+        distances, indices = faiss_index.search(query_vector, k)
+        print(f"Search results - indices: {indices[0]}, distances: {distances[0]}")
+
+        # Map indices to original URIs
+        similar_uris = [image_paths[idx] for idx in indices[0]]
+        print(f"Returning similar URIs: {similar_uris}")
+
+        return {"similar_images": similar_uris, "distances": distances[0].tolist()}
+
+    except Exception as e:
+        print(f"Error during search: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"message": f"An error occurred during search: {str(e)}"}
+        )
+
+@app.get("/query")
+async def query_images(uri: str):
+    try:
+        print(f"\nReceived query request for URI: {uri}")
+        print(f"Current image_paths length: {len(image_paths)}")
+        print(f"Looking for exact match in paths...")
+        
+        # Check if the URI exists in image_paths
+        if uri not in image_paths:
+            print("URI not found in the index.")
+            return {"error": "URI not found"}
+
+        query_idx = image_paths.index(uri)
+        
+        # Get the corresponding vector from FAISS
+        query_vector = faiss_index.reconstruct(query_idx).reshape(1, -1)
+        print(f"Retrieved vector shape: {query_vector.shape}")
+        
+        # Search for similar vectors
+        k = 5
+        distances, indices = faiss_index.search(query_vector, k)
+        print(f"Search results - indices: {indices[0]}, distances: {distances[0]}")
+        
+        # Map the returned indices back to ORIGINAL URIs
+        similar_uris = [image_paths[idx] for idx in indices[0]]
+        print(f"Returning similar URIs: {similar_uris}")
+        
+        return {"similar_images": similar_uris, "distances": distances[0].tolist()}
+    except ValueError as e:
+        print(f"ValueError occurred: {str(e)}")
+        return {"error": "URI not found"}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {"error": f"An error occurred: {str(e)}"}
 
 @app.get("/")
 async def root():

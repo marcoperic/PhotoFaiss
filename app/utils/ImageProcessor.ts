@@ -27,12 +27,14 @@ class ImageProcessor {
 
   /**
    * Creates a zip archive of preprocessed images with parallel processing.
+   * Includes a manifest.json mapping processed filenames to original URIs.
    * @param imageUris - An array of image URIs to process and zip.
    * @returns An object containing the URI and size of the created zip file.
    */
   async createImageZip(imageUris: string[]): Promise<{ uri: string; size: number }> {
     const zip = new JSZip();
     const total = imageUris.length;
+    const manifest: Record<string, string> = {};
 
     console.log(`Starting to process ${total} images...`);
 
@@ -44,13 +46,17 @@ class ImageProcessor {
     const processBatch = async (batch: string[], batchIndex: number) => {
       const promises = batch.map(async (uri, index) => {
         const currentIndex = batchIndex * this.MAX_CONCURRENT + index;
+        const processedFilename = `image_${currentIndex}.jpg`;
         console.log(`Processing image ${currentIndex + 1}/${total}`);
         try {
           const preprocessedUri = await this.preprocessImage(uri);
           const imageData = await FileSystem.readAsStringAsync(preprocessedUri, {
             encoding: FileSystem.EncodingType.Base64,
           });
-          zip.file(`image_${currentIndex}.jpg`, imageData, { base64: true });
+          zip.file(processedFilename, imageData, { base64: true });
+
+          // Add to manifest
+          manifest[processedFilename] = uri;
 
           // Clean up preprocessed image
           await FileSystem.deleteAsync(preprocessedUri, { idempotent: true });
@@ -75,6 +81,9 @@ class ImageProcessor {
     }
 
     console.log('All images processed, generating zip file...');
+
+    // Add manifest.json to the zip
+    zip.file('manifest.json', JSON.stringify(manifest));
 
     // Generate zip file
     const zipContent = await zip.generateAsync({ type: 'base64' });

@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Button, StyleSheet, Dimensions, View, ScrollView } from 'react-native';
+import { Button, StyleSheet, Dimensions, View, ScrollView, Image, TouchableOpacity, ActivityIndicator } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import PhotoLoader from './utils/PhotoLoader';
 import ImageProcessor from './utils/ImageProcessor';
 import APIClient from './utils/APIClient';
+import TFHandler from './utils/TFHandler';
 
 const { width } = Dimensions.get('window');
 
@@ -18,6 +21,10 @@ export default function HomeScreen() {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isWeb, setIsWeb] = useState(false);
+  const [queryImage, setQueryImage] = useState<string | null>(null);
+  const [similarImages, setSimilarImages] = useState<string[]>([]);
+  const [tfHandler, setTfHandler] = useState<TFHandler | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     const initializeHandlers = async () => {
@@ -42,6 +49,10 @@ export default function HomeScreen() {
           setPermissionDenied(true);
         }
       }
+
+      const tf = new TFHandler();
+      await tf.init();
+      setTfHandler(tf);
     };
 
     initializeHandlers();
@@ -72,12 +83,59 @@ export default function HomeScreen() {
       setProcessingProgress(1);
 
       await FileSystem.deleteAsync(zipUri);
-      
+
     } catch (error) {
       console.error('Error processing images:', error);
       setProcessingProgress(0);
     }
   }, [photoLoader]);
+
+  const selectQueryImage = useCallback(async () => {
+    if (!tfHandler) {
+      console.error('TFHandler is not initialized.');
+      return;
+    }
+
+    // Request permission if not granted
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status !== 'granted') {
+      alert('Permission to access media library is required!');
+      return;
+    }
+
+    // Launch image picker to select an image
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets.length > 0) {
+      const selectedUri = result.assets[0].uri;
+      setQueryImage(selectedUri);
+      setSimilarImages([]);
+      setIsSearching(true);
+
+      try {
+        // Preprocess the selected image (resize and compress)
+        const processedImage = await ImageManipulator.manipulateAsync(
+          selectedUri,
+          [{ resize: { width: 224, height: 224 } }],
+          { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG }
+        );
+
+        // Upload the preprocessed image to the server for searching
+        const apiClient = new APIClient();
+        const searchResult = await apiClient.searchSimilarImages(processedImage.uri, 5);
+        console.log('Search results:', searchResult);
+
+        setSimilarImages(searchResult.similar_images);
+      } catch (error) {
+        console.error('Error during similarity search:', error);
+      } finally {
+        setIsSearching(false);
+      }
+    }
+  }, [tfHandler]);
 
   const renderContent = () => (
     <>
@@ -120,6 +178,34 @@ export default function HomeScreen() {
         <ThemedText style={styles.note}>
           Processing a maximum of 500 images.
         </ThemedText>
+
+        {/* New Section for Similarity Search */}
+        <View style={styles.searchContainer}>
+          <Button 
+            title="Search Similar Photos" 
+            onPress={selectQueryImage} 
+            disabled={processingProgress < 1 || isSearching}
+          />
+          {isSearching && (
+            <ActivityIndicator size="large" color="#0000ff" style={styles.loader} />
+          )}
+          {queryImage && (
+            <View style={styles.queryImageContainer}>
+              <ThemedText style={styles.sectionTitle}>Query Image:</ThemedText>
+              <Image source={{ uri: queryImage }} style={styles.queryImage} />
+            </View>
+          )}
+          {similarImages.length > 0 && (
+            <View style={styles.resultsContainer}>
+              <ThemedText style={styles.sectionTitle}>Similar Images:</ThemedText>
+              <ScrollView horizontal>
+                {similarImages.map((uri, index) => (
+                  <Image key={index} source={{ uri }} style={styles.similarImage} />
+                ))}
+              </ScrollView>
+            </View>
+          )}
+        </View>
       </ScrollView>
     </>
   );
@@ -177,5 +263,33 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 14,
     color: '#555',
+  },
+  searchContainer: {
+    width: '100%',
+    marginTop: 30,
+    alignItems: 'center',
+  },
+  queryImageContainer: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  queryImage: {
+    width: 150,
+    height: 150,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+  resultsContainer: {
+    marginTop: 20,
+    width: '100%',
+  },
+  similarImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 10,
+    marginRight: 10,
+  },
+  loader: {
+    marginTop: 10,
   },
 });
