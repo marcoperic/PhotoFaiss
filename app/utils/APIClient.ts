@@ -1,10 +1,10 @@
 import * as FileSystem from 'expo-file-system';
 
 class APIClient {
-  public baseUrl: string;
+  private baseUrl: string;
 
   constructor() {
-    this.baseUrl = 'http://10.5.1.254:8000'; // Replace with your machine's IP
+    this.baseUrl = 'http://172.16.116.18:8000'; // Replace with your machine's IP
   }
 
   async uploadImages(zipUri: string): Promise<Response> {

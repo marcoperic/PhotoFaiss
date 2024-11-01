@@ -42,14 +42,8 @@ def extract_features(image):
 # In-memory storage for uploaded images
 image_storage: Dict[str, Dict[str, bytes]] = {}
 
-# Store just the index and paths as global variables
-faiss_index = None
-image_paths = []
-
 @app.post("/imgUpload")
 async def upload_images(file: UploadFile = File(...)):
-    global faiss_index, image_paths
-    
     try:
         # Verify if the uploaded file is a zip
         print(f"Received file: {file.filename}")
@@ -132,9 +126,8 @@ async def upload_images(file: UploadFile = File(...)):
             
             image_features = np.array(image_features).astype('float32')
             dimension = image_features.shape[1]
-            faiss_index = faiss.IndexFlatL2(dimension)
-            faiss_index.add(image_features)  # Vectors are stored at indices 0, 1, 2, ...
-            image_paths = valid_image_paths  # Store paths in same order as vectors
+            index = faiss.IndexFlatL2(dimension)
+            index.add(image_features)
             
             build_time = time.time() - start_time
             print(f"FAISS index built in {build_time:.2f} seconds")
@@ -171,43 +164,6 @@ async def upload_images(file: UploadFile = File(...)):
             status_code=500,
             content={"message": f"An error occurred: {str(e)}"}
         )
-
-@app.get("/query")
-async def query_images(uri: str):
-    try:
-        print(f"\nReceived query request for URI: {uri}")
-        print(f"Current image_paths length: {len(image_paths)}")
-        print(f"Looking for exact match in paths...")
-        
-        # Debug: Print URI comparisons
-        for idx, stored_uri in enumerate(image_paths):
-            print(f"Comparing:\nReceived: {uri}\nStored  : {stored_uri}")
-            if stored_uri == uri:
-                print(f"Match found at index {idx}")
-                break
-        
-        query_idx = image_paths.index(uri)
-        
-        # Get the corresponding vector from FAISS
-        query_vector = faiss_index.reconstruct(query_idx).reshape(1, -1)
-        print(f"Retrieved vector shape: {query_vector.shape}")
-        
-        # Search for similar vectors
-        k = 5
-        distances, indices = faiss_index.search(query_vector, k)
-        print(f"Search results - indices: {indices[0]}, distances: {distances[0]}")
-        
-        # Map the returned indices back to URIs
-        similar_uris = [image_paths[idx] for idx in indices[0]]
-        print(f"Returning similar URIs: {similar_uris}")
-        
-        return {"similar_images": similar_uris, "distances": distances[0].tolist()}
-    except ValueError as e:
-        print(f"ValueError occurred: {str(e)}")
-        return {"error": "URI not found"}
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        return {"error": f"An error occurred: {str(e)}"}
 
 @app.get("/")
 async def root():
