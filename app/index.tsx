@@ -3,6 +3,8 @@ import { Button, StyleSheet, Dimensions, View, ScrollView } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
+import { Image } from 'react-native';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
@@ -18,6 +20,8 @@ export default function HomeScreen() {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [isWeb, setIsWeb] = useState(false);
+  const [processingComplete, setProcessingComplete] = useState(false);
+  const [similarImages, setSimilarImages] = useState<string[]>([]);
 
   useEffect(() => {
     const initializeHandlers = async () => {
@@ -70,6 +74,7 @@ export default function HomeScreen() {
       
       console.log('Upload completed:', result);
       setProcessingProgress(1);
+      setProcessingComplete(true);
 
       await FileSystem.deleteAsync(zipUri);
       
@@ -78,6 +83,29 @@ export default function HomeScreen() {
       setProcessingProgress(0);
     }
   }, [photoLoader]);
+
+  const searchSimilarImages = async (uri: string) => {
+    try {
+      console.log('Starting similarity search for URI:', uri);
+      const apiClient = new APIClient();
+      const endpoint = `${apiClient.baseUrl}/query?uri=${encodeURIComponent(uri)}`;
+      console.log('Sending request to:', endpoint);
+      
+      const response = await fetch(endpoint);
+      console.log('Response status:', response.status);
+      const data = await response.json();
+      console.log('Response data:', data);
+      
+      if (data.similar_images) {
+        console.log('Found similar images:', data.similar_images);
+        setSimilarImages(data.similar_images);
+      } else if (data.error) {
+        console.error('Server returned error:', data.error);
+      }
+    } catch (error) {
+      console.error('Error searching similar images:', error);
+    }
+  };
 
   const renderContent = () => (
     <>
@@ -121,6 +149,42 @@ export default function HomeScreen() {
           Processing a maximum of 500 images.
         </ThemedText>
       </ScrollView>
+      {processingComplete && (
+        <>
+          <Button 
+            title="Select Image for Similarity Search" 
+            onPress={async () => {
+              try {
+                console.log('Opening image picker...');
+                const result = await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                  quality: 1,
+                });
+                
+                console.log('Image picker result:', result);
+                if (!result.canceled && result.assets[0]) {
+                  console.log('Selected image URI:', result.assets[0].uri);
+                  await searchSimilarImages(result.assets[0].uri);
+                }
+              } catch (error) {
+                console.error('Error in image selection:', error);
+              }
+            }}
+          />
+          
+          {similarImages.length > 0 && (
+            <ScrollView horizontal style={{ marginTop: 20 }}>
+              {similarImages.map((uri, index) => (
+                <Image
+                  key={index}
+                  source={{ uri }}
+                  style={{ width: 100, height: 100, marginRight: 10 }}
+                />
+              ))}
+            </ScrollView>
+          )}
+        </>
+      )}
     </>
   );
 
