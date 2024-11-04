@@ -4,6 +4,7 @@ from typing import Dict, List
 import shutil
 import zipfile
 import os
+from pathlib import Path
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
@@ -48,8 +49,36 @@ image_storage: Dict[str, Dict[str, bytes]] = {}
 faiss_index = None
 image_paths = []
 
+# Add these near the top of the file, after other imports
+USER_DATA_DIR = "user_data"
+
+# Add this function after imports
+def get_user_dir(user_id: str) -> Path:
+    user_dir = Path(USER_DATA_DIR) / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    return user_dir
+
+# Add this new endpoint before the existing routes
+@app.get("/check_index/{user_id}")
+async def check_index(user_id: str):
+    user_dir = get_user_dir(user_id)
+    index_path = user_dir / "faiss.index"
+    paths_file = user_dir / "image_paths.json"
+    
+    if index_path.exists() and paths_file.exists():
+        # Load the existing index and paths
+        global faiss_index, image_paths
+        faiss_index = faiss.read_index(str(index_path))
+        with open(paths_file, 'r') as f:
+            image_paths = json.load(f)
+        print("Loaded index belonging to user:", user_id)
+        return {"exists": True, "image_count": len(image_paths)}
+    
+    print("No index found for user:", user_id)
+    return {"exists": False}
+
 @app.post("/imgUpload")
-async def upload_images(file: UploadFile = File(...)):
+async def upload_images(file: UploadFile = File(...), user_id: str = "default"):
     global faiss_index, image_paths
     
     try:
@@ -149,6 +178,16 @@ async def upload_images(file: UploadFile = File(...)):
             token = secrets.token_hex(8)  # 16 characters
             
             print(f"\nIndex creation complete! Processed {len(valid_image_paths_local)} images")
+            
+            # After creating the FAISS index, save it to user directory
+            user_dir = get_user_dir(user_id)
+            index_path = user_dir / "faiss.index"
+            paths_file = user_dir / "image_paths.json"
+            
+            faiss.write_index(faiss_index, str(index_path))
+            with open(paths_file, 'w') as f:
+                json.dump(image_paths, f)
+            
             return JSONResponse(
                 status_code=200,
                 content={

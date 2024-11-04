@@ -2,9 +2,22 @@ import * as FileSystem from 'expo-file-system';
 
 class APIClient {
   public baseUrl: string;
+  public userId: string;
 
   constructor() {
-    this.baseUrl = 'http://172.16.116.18:8000'; // Replace with your server's IP
+    this.baseUrl = 'http://100.27.49.240:8000'; // Replace with your server's IP
+    this.userId = '1234'; // Hardcoded for testing
+  }
+
+  async checkExistingIndex(): Promise<{ exists: boolean; imageCount?: number }> {
+    try {
+      const response = await fetch(`${this.baseUrl}/check_index/${this.userId}`);
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error checking index:', error);
+      return { exists: false };
+    }
   }
 
   async uploadImages(zipUri: string): Promise<Response> {
@@ -14,6 +27,7 @@ class APIClient {
       name: 'images.zip',
       type: 'application/zip'
     } as any);
+    formData.append('user_id', this.userId);
 
     try {
       const response = await fetch(`${this.baseUrl}/imgUpload`, {
@@ -43,6 +57,7 @@ class APIClient {
       type: 'image/jpeg'
     } as any);
     formData.append('k', k.toString());
+    formData.append('user_id', this.userId);
 
     try {
       console.log(`Sending search request to ${this.baseUrl}/search`);

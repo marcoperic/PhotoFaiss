@@ -25,6 +25,19 @@ export default function HomeScreen() {
   const [similarImages, setSimilarImages] = useState<string[]>([]);
   const [tfHandler, setTfHandler] = useState<TFHandler | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [hasExistingIndex, setHasExistingIndex] = useState(false);
+  const [indexImageCount, setIndexImageCount] = useState(0);
+
+  const checkExistingIndex = useCallback(async () => {
+    const apiClient = new APIClient();
+    const result = await apiClient.checkExistingIndex();
+    setHasExistingIndex(result.exists);
+    setIndexImageCount(result.imageCount || 0);
+  }, []);
+
+  useEffect(() => {
+    checkExistingIndex();
+  }, [checkExistingIndex]);
 
   useEffect(() => {
     const initializeHandlers = async () => {
@@ -141,6 +154,18 @@ export default function HomeScreen() {
     <>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.progressContainer}>
+          <ThemedText style={styles.sectionTitle}>Index Status</ThemedText>
+          <ThemedText>
+            {hasExistingIndex 
+              ? `Existing index found with ${indexImageCount} images` 
+              : 'No existing index found'}
+          </ThemedText>
+          <Button 
+            title="Check for Existing Index" 
+            onPress={checkExistingIndex}
+          />
+        </View>
+        <View style={styles.progressContainer}>
           <ThemedText style={styles.sectionTitle}>Photo Loading Progress</ThemedText>
           <View style={styles.progressBarContainer}>
             <View style={[styles.progressBar, { width: `${photoLoadingProgress * 100}%` }]} />
@@ -173,7 +198,7 @@ export default function HomeScreen() {
         <Button 
           title="Process Images" 
           onPress={processImages} 
-          disabled={processingProgress > 0 && processingProgress < 1} 
+          disabled={hasExistingIndex || (processingProgress > 0 && processingProgress < 1)} 
         />
         <ThemedText style={styles.note}>
           Processing a maximum of 500 images.
